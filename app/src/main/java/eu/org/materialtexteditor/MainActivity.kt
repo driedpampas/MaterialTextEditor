@@ -15,12 +15,13 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
-import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import eu.org.materialtexteditor.ui.theme.AppTheme
 import java.io.BufferedReader
@@ -45,7 +46,7 @@ class MainActivity : ComponentActivity() {
                 val reader = BufferedReader(InputStreamReader(inputStream))
                 val content = reader.readText()
                 reader.close()
-                // Update the state with the file content
+                // Update the state with the file content and file name
                 fileContent.value = content
                 showTextEditor.value = true
                 saveRecentFile(fileName.toString())
@@ -91,6 +92,7 @@ class MainActivity : ComponentActivity() {
         val isSystemInDarkTheme = configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK == Configuration.UI_MODE_NIGHT_YES
         val isDarkTheme by remember { mutableStateOf(isSystemInDarkTheme) }
         val recentFilesState = remember { mutableStateOf(getRecentFiles()) }
+        val fileName = remember { mutableStateOf("") }
 
         AppTheme {
             MaterialTheme(
@@ -98,7 +100,12 @@ class MainActivity : ComponentActivity() {
             ) {
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
                     if (showTextEditor.value) {
-                        TextEditor(modifier = Modifier.padding(innerPadding), text = fileContent.value)
+                        TextEditor(
+                            modifier = Modifier.padding(innerPadding),
+                            text = fileContent.value,
+                            fileName = fileName.value,
+                            onBackClick = { showTextEditor.value = false }
+                        )
                     } else {
                         MainMenu(
                             onNewFileClick = { showTextEditor.value = true },
@@ -115,16 +122,30 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    @OptIn(ExperimentalMaterial3Api::class)
     @Composable
-    fun TextEditor(modifier: Modifier = Modifier, text: String) {
+    fun TextEditor(modifier: Modifier = Modifier, text: String, fileName: String, onBackClick: () -> Unit) {
         var textState by remember { mutableStateOf(text) }
-        TextField(
-            value = textState,
-            onValueChange = { textState = it },
-            modifier = modifier.fillMaxSize()
-        )
+        Column(modifier = modifier.fillMaxSize()) {
+            TopAppBar(
+                title = { Text(text = fileName) },
+                navigationIcon = {
+                    IconButton(onClick = onBackClick) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    titleContentColor = MaterialTheme.colorScheme.onSurface
+                )
+            )
+            TextField(
+                value = textState,
+                onValueChange = { textState = it },
+                modifier = Modifier.fillMaxSize().padding(top = 8.dp)
+            )
+        }
     }
-
     @Composable
     fun MainMenu(onNewFileClick: () -> Unit, onOpenFileClick: () -> Unit, recentFiles: Set<String>, clearRecentFiles: () -> Unit) {
         var recentFilesState by remember { mutableStateOf(recentFiles) }
@@ -155,7 +176,7 @@ class MainActivity : ComponentActivity() {
                 modifier = Modifier
                     .padding(8.dp)
                     .background(MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(8.dp))
-                    .border(2.dp, MaterialTheme.colorScheme.primary, shape = RoundedCornerShape(8.dp))
+                    .border(2.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f), shape = RoundedCornerShape(8.dp))
                     .padding(8.dp)
             ) {
                 Column {
@@ -191,13 +212,5 @@ class MainActivity : ComponentActivity() {
         val editor = sharedPreferences.edit()
         editor.clear()
         editor.apply()
-    }
-
-    @Preview
-    @Composable
-    fun TextEditorPreview() {
-        AppTheme {
-            TextEditor(text = "Sample text")
-        }
     }
 }
