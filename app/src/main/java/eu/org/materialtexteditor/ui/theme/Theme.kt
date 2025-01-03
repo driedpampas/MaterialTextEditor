@@ -1,6 +1,7 @@
 @file:Suppress("unused")
 package eu.org.materialtexteditor.ui.theme
-
+import android.annotation.SuppressLint
+import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.lightColorScheme
@@ -11,11 +12,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
-
-@Immutable
-data class ExtendedColorScheme(
-    val sageGreen: ColorFamily,
-)
 
 private val lightScheme = lightColorScheme(
     primary = primaryLight,
@@ -245,60 +241,6 @@ private val highContrastDarkColorScheme = darkColorScheme(
     surfaceContainerHighest = surfaceContainerHighestDarkHighContrast,
 )
 
-val extendedLight = ExtendedColorScheme(
-  sageGreen = ColorFamily(
-  sageGreenLight,
-  onSageGreenLight,
-  sageGreenContainerLight,
-  onSageGreenContainerLight,
-  ),
-)
-
-val extendedDark = ExtendedColorScheme(
-  sageGreen = ColorFamily(
-  sageGreenDark,
-  onSageGreenDark,
-  sageGreenContainerDark,
-  onSageGreenContainerDark,
-  ),
-)
-
-val extendedLightMediumContrast = ExtendedColorScheme(
-  sageGreen = ColorFamily(
-  sageGreenLightMediumContrast,
-  onSageGreenLightMediumContrast,
-  sageGreenContainerLightMediumContrast,
-  onSageGreenContainerLightMediumContrast,
-  ),
-)
-
-val extendedLightHighContrast = ExtendedColorScheme(
-  sageGreen = ColorFamily(
-  sageGreenLightHighContrast,
-  onSageGreenLightHighContrast,
-  sageGreenContainerLightHighContrast,
-  onSageGreenContainerLightHighContrast,
-  ),
-)
-
-val extendedDarkMediumContrast = ExtendedColorScheme(
-  sageGreen = ColorFamily(
-  sageGreenDarkMediumContrast,
-  onSageGreenDarkMediumContrast,
-  sageGreenContainerDarkMediumContrast,
-  onSageGreenContainerDarkMediumContrast,
-  ),
-)
-
-val extendedDarkHighContrast = ExtendedColorScheme(
-  sageGreen = ColorFamily(
-  sageGreenDarkHighContrast,
-  onSageGreenDarkHighContrast,
-  sageGreenContainerDarkHighContrast,
-  onSageGreenContainerDarkHighContrast,
-  ),
-)
-
 @Immutable
 data class ColorFamily(
     val color: Color,
@@ -311,6 +253,7 @@ val unspecified_scheme = ColorFamily(
     Color.Unspecified, Color.Unspecified, Color.Unspecified, Color.Unspecified
 )
 
+@SuppressLint("ObsoleteSdkInt")
 @Composable
 fun AppTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
@@ -319,7 +262,7 @@ fun AppTheme(
     content: @Composable () -> Unit
 ) {
   val colorScheme = when {
-      dynamicColor -> {
+      dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
           val context = LocalContext.current
           if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
       }
