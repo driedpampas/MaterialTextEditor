@@ -9,7 +9,7 @@
     <path
         android:fillColor="#00000000"
         android:pathData="M65.8,39 L46.81,57.9a2.49,2.5 90,0 1,-1.16 0.66l-9.38,2.33 2.35,-9.33A2.5,2.51 90,0 1,39.27 50.4L50.73,39L33.91,39A5,5.02 90,0 0,28.88 44l0,20a5,5.02 90,0 0,5.02 5L74.09,69a5,5.02 90,0 0,5.02 -5L79.12,44A5,5.02 90,0 0,74.09 39ZM66.56,45.25l3.77,0m3.77,0l-3.77,0m0,0l0,17.5m0,0l-3.77,0m3.77,0l3.77,0"
-        android:strokeColor="#FFFFB692"
+        android:strokeColor="@color/material_dynamic_tertiary50"
         android:strokeLineCap="round"
         android:strokeLineJoin="round"
         android:strokeWidth="3.76" />
@@ -17,7 +17,7 @@
     <path
         android:fillColor="#00000000"
         android:pathData="M39.27,50.4A2.5,2.51 90,0 0,38.62 51.56l-2.35,9.33 9.38,-2.33a2.49,2.5 90,0 0,1.16 -0.66z"
-        android:strokeColor="#FFFFB692"
+        android:strokeColor="@color/material_dynamic_tertiary50"
         android:strokeLineCap="round"
         android:strokeLineJoin="round"
         android:strokeWidth="3.76" />
