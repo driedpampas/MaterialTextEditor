@@ -1,16 +1,18 @@
 package eu.org.materialtexteditor
 
+import android.content.Intent
 import android.content.SharedPreferences
 import android.content.res.Configuration
 import android.net.Uri
 import android.os.Bundle
+import android.os.Environment
 import android.provider.OpenableColumns
+import android.provider.Settings
 import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -18,65 +20,82 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.outlined.Save
+import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Paint
-import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
-import androidx.compose.ui.graphics.nativeCanvas
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import eu.org.materialtexteditor.ui.theme.AppTheme
 import java.io.BufferedReader
 import java.io.InputStreamReader
-import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.res.vectorResource
 
 class MainActivity : ComponentActivity() {
     private val fileContent = mutableStateOf("")
     private val showTextEditor = mutableStateOf(false)
     private val fileName = mutableStateOf("")
+    private val filePath = mutableStateOf("")
 
     private val getContent: ActivityResultLauncher<String> = registerForActivityResult(
         ActivityResultContracts.GetContent()) { uri: Uri? ->
         uri?.let {
-            Log.d("MainActivity", "Selected file URI: $it")
-            try {
-                val cursor = contentResolver.query(it, null, null, null, null)
-                val nameIndex = cursor?.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-                cursor?.moveToFirst()
-                val fileName = nameIndex?.let { index -> cursor.getString(index) }
-                cursor?.close()
-
-                val inputStream = contentResolver.openInputStream(it)
-                val reader = BufferedReader(InputStreamReader(inputStream))
-                val content = reader.readText()
-                reader.close()
-                // Update the state with the file content and file name
-                fileContent.value = content
-                showTextEditor.value = true
-                this.fileName.value = fileName ?: "Untitled"
-                Log.d("MainActivity", "File name: $fileName")
-                saveRecentFile(fileName ?: "Untitled")
-            } catch (e: Exception) {
-                Log.e("MainActivity", "Error reading file", e)
-            }
+            handleFileUri(it)
         }
     }
 
+    private val requestManageAllFilesPermission: ActivityResultLauncher<Intent> = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()) {
+        // Handle the result if needed
+    }
+
+    private fun requestManageAllFilesPermission() {
+        val intent = Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
+        requestManageAllFilesPermission.launch(intent)
+    }
+
+    private fun handleFileUri(uri: Uri) {
+        Log.d("MainActivity", "Selected file URI: $uri")
+        try {
+            val cursor = contentResolver.query(uri, null, null, null, null)
+            val nameIndex = cursor?.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+            cursor?.moveToFirst()
+            val displayName = nameIndex?.let { index -> cursor.getString(index) }
+            cursor?.close()
+
+            val inputStream = contentResolver.openInputStream(uri)
+            val reader = BufferedReader(InputStreamReader(inputStream))
+            val content = reader.readText()
+            reader.close()
+
+            filePath.value = uri.toString()
+            Log.d("MainActivity", "File path: ${filePath.value}")
+            fileContent.value = content
+            showTextEditor.value = true
+            fileName.value = displayName ?: "Untitled"
+            Log.d("MainActivity", "File name: ${fileName.value}")
+            saveRecentFile(fileName.value, uri.toString())
+        } catch (e: Exception) {
+            Log.e("MainActivity", "Error reading file", e)
+        }
+    }
+
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (!Environment.isExternalStorageManager()) {
+            requestManageAllFilesPermission()
+        }
         setContent {
             MainContent()
         }
     }
 
-    private fun saveRecentFile(filePath: String) {
+    data class RecentFile(val name: String, val path: String)
+    
+    private fun saveRecentFile(fileName: String, filePath: String) {
         val sharedPreferences: SharedPreferences = getSharedPreferences("recent_files", MODE_PRIVATE)
         val editor = sharedPreferences.edit()
         val recentFiles = sharedPreferences.getStringSet("files", mutableSetOf())?.toMutableSet() ?: mutableSetOf()
@@ -89,30 +108,38 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        recentFiles.add(filePath)
+        recentFiles.add("$fileName|$filePath")
         editor.putStringSet("files", recentFiles)
         editor.apply()
     }
 
-    private fun getRecentFiles(): Set<String> {
+    private fun getRecentFiles(): Set<RecentFile> {
         val sharedPreferences: SharedPreferences = getSharedPreferences("recent_files", MODE_PRIVATE)
-        return sharedPreferences.getStringSet("files", mutableSetOf()) ?: mutableSetOf()
+        val recentFiles = sharedPreferences.getStringSet("files", mutableSetOf()) ?: mutableSetOf()
+        return recentFiles.mapNotNull {
+            val parts = it.split("|")
+            if (parts.size >= 2) {
+                RecentFile(parts[0], parts[1])
+            } else {
+                null
+            }
+        }.toSet()
     }
 
     @Composable
     fun MainContent() {
         val configuration = LocalConfiguration.current
+        val recentFilesState = remember { mutableStateOf(getRecentFiles()) }
         val isSystemInDarkTheme = configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK == Configuration.UI_MODE_NIGHT_YES
         val isDarkTheme by remember { mutableStateOf(isSystemInDarkTheme) }
-        val recentFilesState = remember { mutableStateOf(getRecentFiles()) }
 
         AppTheme {
             MaterialTheme(
                 colorScheme = if (isDarkTheme) darkColorScheme() else lightColorScheme()
             ) {
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
-                    Log.d("MainActivity", "MainContent: File name: $fileName")
                     if (showTextEditor.value) {
+                        Log.d("MainActivity", "MainContent: File name: $fileName")
                         TextEditor(
                             modifier = Modifier.padding(innerPadding),
                             text = fileContent.value,
@@ -145,7 +172,8 @@ class MainActivity : ComponentActivity() {
                     Text(
                         text = fileName,
                         maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.clickable { /* Handle file renaming */ }
                     )
                 },
                 navigationIcon = {
@@ -155,7 +183,7 @@ class MainActivity : ComponentActivity() {
                 },
                 actions = {
                     IconButton(onClick = { textState = "" }) {
-                        Icon(Icons.Default.Info, contentDescription = "Clear")
+                        Icon(Icons.Outlined.Save, contentDescription = "Clear")
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -166,23 +194,22 @@ class MainActivity : ComponentActivity() {
             TextField(
                 value = textState,
                 onValueChange = { textState = it },
-                modifier = Modifier.fillMaxSize().padding(top = 8.dp)
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(top = 8.dp)
             )
         }
     }
 
-
     @Composable
-    fun MainMenu(onNewFileClick: () -> Unit, onOpenFileClick: () -> Unit, recentFiles: Set<String>, clearRecentFiles: () -> Unit) {
+    fun MainMenu(onNewFileClick: () -> Unit, onOpenFileClick: () -> Unit, recentFiles: Set<RecentFile>, clearRecentFiles: () -> Unit) {
         var recentFilesState by remember { mutableStateOf(recentFiles) }
-        val backgroundPainter = painterResource(id = R.drawable.ic_launcher_foreground)
 
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(
-                    brush = repeatingPatternBackground(modifier = Modifier.fillMaxSize()))
-                .padding(16.dp)
+                .padding(16.dp),
+            contentAlignment = Alignment.Center
         ) {
             Column(
                 verticalArrangement = Arrangement.Center,
@@ -191,10 +218,11 @@ class MainActivity : ComponentActivity() {
                 Row(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(text = "Recently Opened Files", style = MaterialTheme.typography.bodySmall)
+                    Text(text = "Recently Opened Files", style = MaterialTheme.typography.bodyMedium)
                     Spacer(modifier = Modifier.width(32.dp))
                     Text(
                         text = "Clear",
+                        style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.error,
                         modifier = Modifier.clickable {
                             clearRecentFiles()
@@ -206,29 +234,45 @@ class MainActivity : ComponentActivity() {
                 Box(
                     modifier = Modifier
                         .padding(8.dp)
-                        .background(MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(8.dp))
-                        .border(2.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f), shape = RoundedCornerShape(8.dp))
+                        .background(
+                            MaterialTheme.colorScheme.surface,
+                            shape = RoundedCornerShape(8.dp)
+                        )
+                        .border(
+                            2.dp,
+                            MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
+                            shape = RoundedCornerShape(8.dp)
+                        )
                         .padding(8.dp)
                 ) {
                     if (recentFilesState.isEmpty()) {
-                        Icon(
-                            imageVector = Icons.Default.Info,
-                            contentDescription = "No recent files",
-                            tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
-                            modifier = Modifier.size(24.dp)
-                        )
-                        Text(text = "No recent files", modifier = Modifier.padding(8.dp))
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Info,
+                                contentDescription = "No recent files",
+                                tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                                modifier = Modifier.size(24.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(text = "No recent files", modifier = Modifier.padding(8.dp))
+                        }
                     } else {
                         Column {
-                            recentFilesState.forEachIndexed { index, filePath ->
-                                Text(
-                                    text = filePath,
-                                    modifier = Modifier
-                                        .clickable { /* Handle file reopening */ }
-                                        .padding(8.dp)
-                                )
-                                if (index < recentFilesState.size - 1) {
-                                    HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                            recentFilesState.forEachIndexed { index, recentFile ->
+                                Column {
+                                    Text(
+                                        text = recentFile.name,
+                                        modifier = Modifier
+                                            .padding(8.dp)
+                                            .clickable {
+                                                handleFileUri(Uri.parse(recentFile.path))
+                                            }
+                                    )
+                                    if (index < recentFilesState.size - 1) {
+                                        HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                                    }
                                 }
                             }
                         }
@@ -237,38 +281,20 @@ class MainActivity : ComponentActivity() {
                 Row(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Button(onClick = onNewFileClick) {
+                    Button(
+                        onClick = onNewFileClick,
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary)
+                    ) {
                         Text(text = "Create New File")
                     }
                     Spacer(modifier = Modifier.width(16.dp))
                     Button(
                         onClick = onOpenFileClick,
-                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary)
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.tertiary)
                     ) {
                         Text(text = "Open File")
                     }
                 }
-            }
-        }
-    }
-
-    @Composable
-    fun repeatingPatternBackground(modifier: Modifier = Modifier): Brush {
-        Canvas(modifier = modifier) {
-            val imageBitmap = ImageVector.vectorResource(id = R.drawable.ic_launcher_background)
-            val imageWidth = imageBitmap.intrinsicSize.width
-            val imageHeight = imageBitmap.intrinsicSize.height
-
-            drawIntoCanvas { canvas ->
-                val paint = Paint().asFrameworkPaint()
-                val shader = android.graphics.BitmapShader(
-                    imageBitmap,
-                    android.graphics.Shader.TileMode.REPEAT,
-                    android.graphics.Shader.TileMode.REPEAT
-                )
-                paint.shader = shader
-
-                canvas.nativeCanvas.drawRect(0f, 0f, size.width, size.height, paint)
             }
         }
     }
