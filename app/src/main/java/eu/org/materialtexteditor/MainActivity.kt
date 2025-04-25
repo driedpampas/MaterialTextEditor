@@ -1,138 +1,222 @@
 package eu.org.materialtexteditor
 
+import android.annotation.SuppressLint
 import android.content.Intent
 import android.content.SharedPreferences
 import android.content.res.Configuration
 import android.net.Uri
 import android.os.Bundle
 import android.os.Environment
-import android.provider.OpenableColumns
-import android.provider.Settings
+import android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION
 import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.outlined.Save
-import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
-import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.dp
+import androidx.core.content.edit
+import androidx.core.net.toUri
 import eu.org.materialtexteditor.ui.theme.AppTheme
-import java.io.BufferedReader
-import java.io.InputStreamReader
+import java.io.File
 
 class MainActivity : ComponentActivity() {
     private val fileContent = mutableStateOf("")
     private val showTextEditor = mutableStateOf(false)
     private val fileName = mutableStateOf("")
-    private val filePath = mutableStateOf("")
+    val fileHandler = FileHandler(this)
+    private val fileUri = mutableStateOf<Uri?>(null)
 
-    private val getContent: ActivityResultLauncher<String> = registerForActivityResult(
-        ActivityResultContracts.GetContent()) { uri: Uri? ->
+    private val openDocument: ActivityResultLauncher<Array<String>> = registerForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
         uri?.let {
-            handleFileUri(it)
+            val intent = Intent().apply {
+                flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+            }
+            fileUri.value = it
+            Log.w("MainActivity", "File path: $it")
+            fileHandler.handleFileUri(
+                contentResolver, it, fileName, fileContent, showTextEditor, fileUri, intent
+            )
         }
     }
 
-    private val requestManageAllFilesPermission: ActivityResultLauncher<Intent> = registerForActivityResult(
-        ActivityResultContracts.StartActivityForResult()) {
-        // Handle the result if needed
-    }
-
-    private fun requestManageAllFilesPermission() {
-        val intent = Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
-        requestManageAllFilesPermission.launch(intent)
-    }
-
-    private fun handleFileUri(uri: Uri) {
-        Log.d("MainActivity", "Selected file URI: $uri")
+    private fun saveText(content: String) {
         try {
-            val cursor = contentResolver.query(uri, null, null, null, null)
-            val nameIndex = cursor?.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-            cursor?.moveToFirst()
-            val displayName = nameIndex?.let { index -> cursor.getString(index) }
-            cursor?.close()
+            fileUri.value?.let { uri ->
+                Log.d("MainActivity", "Saving file to URI: $uri")
+                val outputStream = when {
+                    uri.scheme == "file" -> {
+                        // Saving to local file
+                        File(uri.path!!).outputStream()
+                    }
+                    uri.scheme == "content" -> {
+                        // Normal SAF file
+                        contentResolver.openOutputStream(uri, "wt")
+                    }
+                    else -> {
+                        Log.w("MainActivity", "Unknown URI scheme: ${uri.scheme}")
+                        null
+                    }
+                }
 
-            val inputStream = contentResolver.openInputStream(uri)
-            val reader = BufferedReader(InputStreamReader(inputStream))
-            val content = reader.readText()
-            reader.close()
+                outputStream?.use { it.write(content.toByteArray()) }
 
-            filePath.value = uri.toString()
-            Log.d("MainActivity", "File path: ${filePath.value}")
-            fileContent.value = content
-            showTextEditor.value = true
-            fileName.value = displayName ?: "Untitled"
-            Log.d("MainActivity", "File name: ${fileName.value}")
-            saveRecentFile(fileName.value, uri.toString())
+                Log.d("MainActivity", "File saved successfully: $uri")
+            }
         } catch (e: Exception) {
-            Log.e("MainActivity", "Error reading file", e)
+            Log.e("MainActivity", "Error saving file", e)
         }
     }
 
+    private fun shareText(content: String) {
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_TEXT, content)
+            putExtra(Intent.EXTRA_TITLE, fileName.value)
+        }
+        startActivity(Intent.createChooser(intent, "Share text"))
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        if (!Environment.isExternalStorageManager()) {
-            requestManageAllFilesPermission()
-        }
+
+        handleIntent(intent)
+
         setContent {
             MainContent()
         }
     }
 
-    data class RecentFile(val name: String, val path: String)
-    
-    private fun saveRecentFile(fileName: String, filePath: String) {
-        val sharedPreferences: SharedPreferences = getSharedPreferences("recent_files", MODE_PRIVATE)
-        val editor = sharedPreferences.edit()
-        val recentFiles = sharedPreferences.getStringSet("files", mutableSetOf())?.toMutableSet() ?: mutableSetOf()
-
-        if (recentFiles.size >= 5) {
-            val iterator = recentFiles.iterator()
-            if (iterator.hasNext()) {
-                iterator.next()
-                iterator.remove()
-            }
-        }
-
-        recentFiles.add("$fileName|$filePath")
-        editor.putStringSet("files", recentFiles)
-        editor.apply()
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        handleIntent(intent)
     }
 
-    private fun getRecentFiles(): Set<RecentFile> {
-        val sharedPreferences: SharedPreferences = getSharedPreferences("recent_files", MODE_PRIVATE)
-        val recentFiles = sharedPreferences.getStringSet("files", mutableSetOf()) ?: mutableSetOf()
-        return recentFiles.mapNotNull {
-            val parts = it.split("|")
-            if (parts.size >= 2) {
-                RecentFile(parts[0], parts[1])
-            } else {
-                null
+    @SuppressLint("WrongConstant")
+    private fun handleIntent(intent: Intent?) {
+        // Handle URLs first
+        intent?.let {
+            val action = it.action
+            val uri = it.data
+
+            when (uri?.host) {
+                "fixupx.com" -> {
+                    handleRedirect(uri.toString().replace("fixupx.com", "x.com"))
+                    return
+                }
+                "vxtwitter.com" -> {
+                    handleRedirect(uri.toString().replace("vxtwitter.com", "twitter.com"))
+                    return
+                }
+                "fxtwitter.com" -> {
+                    handleRedirect(uri.toString().replace("fxtwitter.com", "twitter.com"))
+                    return
+                }
+                "fixvx.com" -> {
+                    handleRedirect(uri.toString().replace("fixvx.com", "x.com"))
+                    return
+                }
+                "autistic.kids" -> {
+                    handleRedirect(uri.toString().replace("autistic.kids", "twitter.com"))
+                    return
+                }
+                "girlcockx.com" -> {
+                    handleRedirect(uri.toString().replace("girlcockx.com", "x.com"))
+                    return
+                }
+                "vt.vxtiktok.com" -> {
+                    handleRedirect(uri.toString().replace("vt.vxtiktok.com", "vm.tiktok.com"))
+                    return
+                }
             }
-        }.toSet()
+
+            if (uri != null) {
+                when (action) {
+                    Intent.ACTION_OPEN_DOCUMENT, Intent.ACTION_VIEW -> {
+
+                        if (!Environment.isExternalStorageManager()) {
+                            val intent =
+                                Intent(ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
+                            val uri = Uri.fromParts("package", packageName, null)
+                            intent.setData(uri)
+                            startActivity(intent)
+                        }
+
+                        val flags = it.flags
+                        val takeFlags = flags and
+                                (Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                                        Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+                        val persistFlags  = flags and Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
+
+                        if (takeFlags != 0 && persistFlags != 0) {
+                            try {
+                                contentResolver.takePersistableUriPermission(uri, takeFlags)
+                                Log.d("MainActivity",
+                                    "Persistable URI permission granted for $uri")
+                            } catch (e: SecurityException) {
+                                Log.w("MainActivity",
+                                    "Failed to take persistable permission for $uri", e)
+                            }
+                        } else {
+                            Log.w("MainActivity",
+                                "Intent did not include persistable flags for $uri")
+                        }
+
+                        if (it.type?.startsWith("text/") == true ||
+                            it.type == "application/text" ||
+                            it.type == "application/x-unknown") {
+                            fileHandler.handleFileUri(
+                                contentResolver,
+                                uri,
+                                fileName,
+                                fileContent,
+                                showTextEditor,
+                                fileUri,
+                                it
+                            )
+                            showTextEditor.value = true
+                        }
+                    }
+                    else -> Log.w("MainActivity", "Unhandled intent action: $action")
+                }
+            }
+        }
+    }
+
+    private fun handleRedirect(xUrl: String) {
+        try {
+            val xIntent = Intent(Intent.ACTION_VIEW, xUrl.toUri())
+            xIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            startActivity(xIntent)
+            finish()
+        } catch (e: Exception) {
+            Log.e("MainActivity", "Error redirecting to X app", e)
+        }
+    }
+
+    private val createDocument: ActivityResultLauncher<String> = registerForActivityResult(
+        ActivityResultContracts.CreateDocument("text/plain")
+    ) { uri: Uri? ->
+        uri?.let {
+            fileUri.value = it
+            showTextEditor.value = true
+        }
     }
 
     @Composable
     fun MainContent() {
         val configuration = LocalConfiguration.current
-        val recentFilesState = remember { mutableStateOf(getRecentFiles()) }
+        val recentFilesState = remember { mutableStateOf(fileHandler.getRecentFiles()) }
         val isSystemInDarkTheme = configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK == Configuration.UI_MODE_NIGHT_YES
         val isDarkTheme by remember { mutableStateOf(isSystemInDarkTheme) }
 
+        enableEdgeToEdge()
         AppTheme {
             MaterialTheme(
                 colorScheme = if (isDarkTheme) darkColorScheme() else lightColorScheme()
@@ -141,158 +225,45 @@ class MainActivity : ComponentActivity() {
                     if (showTextEditor.value) {
                         Log.d("MainActivity", "MainContent: File name: $fileName")
                         TextEditor(
-                            modifier = Modifier.padding(innerPadding),
                             text = fileContent.value,
                             fileName = fileName.value,
-                            onBackClick = { showTextEditor.value = false }
+                            onBackClick = {
+                                showTextEditor.value = false
+                                recentFilesState.value = fileHandler.getRecentFiles()
+                            },
+                            onRename = { newName ->
+                                fileName.value = newName
+                                fileHandler.updateFileName(newName)
+                            },
+                            onSave = { content -> saveText(content) },
+                            onShare = { content -> shareText(content) }
                         )
                     } else {
                         MainMenu(
-                            onNewFileClick = { showTextEditor.value = true },
-                            onOpenFileClick = { getContent.launch("text/plain") },
+                            onNewFileClick = { createDocument.launch("NewFile.txt") },
+                            onOpenFileClick = { openDocument.launch(arrayOf("text/plain")) },
                             recentFiles = recentFilesState.value,
                             clearRecentFiles = {
                                 clearRecentFiles()
                                 recentFilesState.value = emptySet()
-                            }
-                        )
-                    }
-                }
-            }
-        }
-    }
-
-    @OptIn(ExperimentalMaterial3Api::class)
-    @Composable
-    fun TextEditor(modifier: Modifier = Modifier, text: String, fileName: String, onBackClick: () -> Unit) {
-        var textState by remember { mutableStateOf(text) }
-        Column(modifier = modifier.fillMaxSize()) {
-            CenterAlignedTopAppBar(
-                title = {
-                    Text(
-                        text = fileName,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.clickable { /* Handle file renaming */ }
-                    )
-                },
-                navigationIcon = {
-                    IconButton(onClick = onBackClick) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
-                    }
-                },
-                actions = {
-                    IconButton(onClick = { textState = "" }) {
-                        Icon(Icons.Outlined.Save, contentDescription = "Clear")
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface,
-                    titleContentColor = MaterialTheme.colorScheme.onSurface
-                )
-            )
-            TextField(
-                value = textState,
-                onValueChange = { textState = it },
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(top = 8.dp)
-            )
-        }
-    }
-
-    @Composable
-    fun MainMenu(onNewFileClick: () -> Unit, onOpenFileClick: () -> Unit, recentFiles: Set<RecentFile>, clearRecentFiles: () -> Unit) {
-        var recentFilesState by remember { mutableStateOf(recentFiles) }
-
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(16.dp),
-            contentAlignment = Alignment.Center
-        ) {
-            Column(
-                verticalArrangement = Arrangement.Center,
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(text = "Recently Opened Files", style = MaterialTheme.typography.bodyMedium)
-                    Spacer(modifier = Modifier.width(32.dp))
-                    Text(
-                        text = "Clear",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.error,
-                        modifier = Modifier.clickable {
-                            clearRecentFiles()
-                            recentFilesState = emptySet()
-                        }
-                    )
-                }
-                Spacer(modifier = Modifier.height(8.dp))
-                Box(
-                    modifier = Modifier
-                        .padding(8.dp)
-                        .background(
-                            MaterialTheme.colorScheme.surface,
-                            shape = RoundedCornerShape(8.dp)
-                        )
-                        .border(
-                            2.dp,
-                            MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
-                            shape = RoundedCornerShape(8.dp)
-                        )
-                        .padding(8.dp)
-                ) {
-                    if (recentFilesState.isEmpty()) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                imageVector = Icons.Rounded.Info,
-                                contentDescription = "No recent files",
-                                tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
-                                modifier = Modifier.size(24.dp)
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(text = "No recent files", modifier = Modifier.padding(8.dp))
-                        }
-                    } else {
-                        Column {
-                            recentFilesState.forEachIndexed { index, recentFile ->
-                                Column {
-                                    Text(
-                                        text = recentFile.name,
-                                        modifier = Modifier
-                                            .padding(8.dp)
-                                            .clickable {
-                                                handleFileUri(Uri.parse(recentFile.path))
-                                            }
-                                    )
-                                    if (index < recentFilesState.size - 1) {
-                                        HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                            },
+                            onRecentFileClick = { recentFile ->
+                                val uri = recentFile.path.toUri()
+                                fileUri.value = uri
+                                fileHandler.handleFileUri(
+                                    contentResolver,
+                                    uri,
+                                    fileName,
+                                    fileContent,
+                                    showTextEditor,
+                                    fileUri,
+                                    Intent().apply {
+                                        flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
                                     }
-                                }
+                                )
                             }
-                        }
-                    }
-                }
-                Row(
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Button(
-                        onClick = onNewFileClick,
-                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary)
-                    ) {
-                        Text(text = "Create New File")
-                    }
-                    Spacer(modifier = Modifier.width(16.dp))
-                    Button(
-                        onClick = onOpenFileClick,
-                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.tertiary)
-                    ) {
-                        Text(text = "Open File")
+
+                        )
                     }
                 }
             }
@@ -301,8 +272,8 @@ class MainActivity : ComponentActivity() {
 
     private fun clearRecentFiles() {
         val sharedPreferences: SharedPreferences = getSharedPreferences("recent_files", MODE_PRIVATE)
-        val editor = sharedPreferences.edit()
-        editor.clear()
-        editor.apply()
+        sharedPreferences.edit {
+            clear()
+        }
     }
 }
