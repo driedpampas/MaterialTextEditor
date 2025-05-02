@@ -1,8 +1,25 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.compose.compiler)
 }
+
+val versionPropsFile = rootProject.file("version.properties")
+val versionProps = Properties().apply {
+    if (versionPropsFile.exists()) {
+        load(versionPropsFile.inputStream())
+    } else {
+        setProperty("VERSION_CODE", "1")
+    }
+}
+
+val gitCommit: String? by project
+
+val newVersionCode = versionProps.getProperty("VERSION_CODE").toInt() + 1
+versionProps.setProperty("VERSION_CODE", newVersionCode.toString())
+versionProps.store(versionPropsFile.outputStream(), null)
 
 android {
     namespace = "eu.org.materialtexteditor"
@@ -12,8 +29,8 @@ android {
         applicationId = "eu.org.materialtexteditor"
         minSdk = 31
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = newVersionCode
+        versionName = gitCommit ?: "dev"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

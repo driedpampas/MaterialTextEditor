@@ -24,6 +24,7 @@ class FileHandler(private val context: Context) {
         private const val MAX_RECENT_FILES = 5
     }
 
+    val recentFilesState = mutableStateOf(getRecentFiles())
     private val filePath = mutableStateOf("")
 
     data class RecentFile(val name: String, val path: String)
@@ -36,18 +37,35 @@ class FileHandler(private val context: Context) {
         fileContent: MutableState<String>,
         showTextEditor: MutableState<Boolean>,
         fileUri: MutableState<Uri?>,
-        intent: Intent
+        intent: Intent,
+        mimeTypeString: MutableState<String?>,
+        onFileMissing: ((Uri, String) -> Unit)? = null,
     ) {
         try {
+            Log.d(TAG, "Opening URI: $uri || MimeType: ${contentResolver.getType(uri)}")
+            mimeTypeString.value = contentResolver.getType(uri)
             val flags = intent.flags
+            Log.d(TAG, "Intent flags: $flags")
             val takeFlags = flags and (FLAG_GRANT_READ_URI_PERMISSION or FLAG_GRANT_WRITE_URI_PERMISSION)
+            Log.d(TAG, "Take flags: $takeFlags")
             val persistable = flags and Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
+            Log.d(TAG, "Persistable: $persistable")
 
             if (takeFlags != 0 && persistable != 0) {
-                contentResolver.takePersistableUriPermission(uri, takeFlags)
+                try {
+                    contentResolver.takePersistableUriPermission(uri, takeFlags)
+                    Log.d(TAG, "Persistable URI permission taken: $uri")
+                } catch (e: SecurityException) {
+                    Log.e(TAG, "SecurityException in contentResolver: Unable to take persistable URI permission", e)
+                }
+            } else {
+                Log.d(TAG, "Not taking persistable URI permission (not needed or not available)")
             }
 
-            // Retrieve the display name with a fallback to the file name from the URI's path.
+            // Try to open the file
+            val content = contentResolver.openInputStream(uri)?.bufferedReader()?.readText() ?: ""
+
+            // Retrieve the display name
             var displayName = File(uri.path ?: "Untitled.txt").name
             contentResolver.query(uri, null, null, null, null)?.use { cursor ->
                 if (cursor.moveToFirst()) {
@@ -58,19 +76,34 @@ class FileHandler(private val context: Context) {
                 }
             }
 
-            val content = contentResolver.openInputStream(uri)?.bufferedReader()?.readText() ?: ""
-
             fileUri.value = uri
             fileName.value = displayName
             fileContent.value = content
             showTextEditor.value = true
 
             saveRecentFile(RecentFile(displayName, uri.toString()))
+        } catch (e: java.io.FileNotFoundException) {
+            Log.e(TAG, "File not found: $uri", e)
+            onFileMissing?.invoke(uri, "File Not Found")
         } catch (e: SecurityException) {
             Log.e(TAG, "SecurityException: Unable to take persistable URI permission", e)
+            onFileMissing?.invoke(uri, "Permission Denied")
         } catch (e: Exception) {
             Log.e(TAG, "Error reading file", e)
+            onFileMissing?.invoke(uri, "Error reading file")
         }
+    }
+
+    internal fun removeRecentFile(uriStr: String) {
+        val sharedPreferences: SharedPreferences =
+            context.getSharedPreferences(RECENT_FILES_PREF_NAME, Context.MODE_PRIVATE)
+        val recentFilesStrings = sharedPreferences.getStringSet(RECENT_FILES_KEY, emptySet()) ?: emptySet()
+        val filtered = recentFilesStrings.filterNot { it.endsWith("|$uriStr") }.toSet()
+        sharedPreferences.edit {
+            putStringSet(RECENT_FILES_KEY, filtered)
+        }
+        Log.d(TAG, "Removed missing file from recent files: $uriStr")
+        recentFilesState.value = getRecentFiles()
     }
 
     private fun saveRecentFile(recentFile: RecentFile) {
@@ -79,7 +112,7 @@ class FileHandler(private val context: Context) {
         sharedPreferences.edit {
             val recentFiles = getRecentFiles().toMutableSet()
 
-            // Remove the oldest file if we have too many
+            // Remove the oldest file if too many.
             if (recentFiles.size >= MAX_RECENT_FILES) {
                 recentFiles.remove(recentFiles.first())
             }
@@ -87,6 +120,7 @@ class FileHandler(private val context: Context) {
             recentFiles.add(recentFile)
             putStringSet(RECENT_FILES_KEY, recentFiles.map { "${it.name}|${it.path}" }.toSet())
         }
+        recentFilesState.value = getRecentFiles()
     }
 
     fun getRecentFiles(): Set<RecentFile> {
@@ -116,6 +150,7 @@ class FileHandler(private val context: Context) {
             context.getSharedPreferences(RECENT_FILES_PREF_NAME, Context.MODE_PRIVATE).edit {
                 putStringSet(RECENT_FILES_KEY, currentFiles.map { "${it.name}|${it.path}" }.toSet())
             }
+            recentFilesState.value = getRecentFiles()
         }
     }
 }

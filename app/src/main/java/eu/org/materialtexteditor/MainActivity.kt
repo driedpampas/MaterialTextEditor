@@ -9,6 +9,7 @@ import android.os.Bundle
 import android.os.Environment
 import android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION
 import android.util.Log
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -28,21 +29,29 @@ class MainActivity : ComponentActivity() {
     private val fileContent = mutableStateOf("")
     private val showTextEditor = mutableStateOf(false)
     private val fileName = mutableStateOf("")
-    val fileHandler = FileHandler(this)
+    private lateinit var fileHandler : FileHandler
     private val fileUri = mutableStateOf<Uri?>(null)
+    private val showMissingFileDialog = mutableStateOf(false)
+    private val missingFileUri = mutableStateOf<Uri?>(null)
+    private val errorMessage = mutableStateOf("File Not Found")
+    private var mimeTypeString = mutableStateOf<String?>(null)
 
     private val openDocument: ActivityResultLauncher<Array<String>> = registerForActivityResult(
         ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
         uri?.let {
             val intent = Intent().apply {
-                flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                        Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
+                        Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
             }
             fileUri.value = it
-            Log.w("MainActivity", "File path: $it")
+            Log.d("MainActivity", "intent flags: ${intent.flags}")
+            Log.d("MainActivity", "File path: $it")
             fileHandler.handleFileUri(
-                contentResolver, it, fileName, fileContent, showTextEditor, fileUri, intent
+                contentResolver, it, fileName, fileContent, showTextEditor, fileUri, intent, mimeTypeString
             )
+            mimeTypeString.value = contentResolver.getType(it)
         }
     }
 
@@ -50,12 +59,12 @@ class MainActivity : ComponentActivity() {
         try {
             fileUri.value?.let { uri ->
                 Log.d("MainActivity", "Saving file to URI: $uri")
-                val outputStream = when {
-                    uri.scheme == "file" -> {
+                val outputStream = when (uri.scheme) {
+                    "file" -> {
                         // Saving to local file
                         File(uri.path!!).outputStream()
                     }
-                    uri.scheme == "content" -> {
+                    "content" -> {
                         // Normal SAF file
                         contentResolver.openOutputStream(uri, "wt")
                     }
@@ -85,6 +94,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        fileHandler = FileHandler(this)
 
         handleIntent(intent)
 
@@ -146,15 +157,14 @@ class MainActivity : ComponentActivity() {
                             val uri = Uri.fromParts("package", packageName, null)
                             intent.setData(uri)
                             startActivity(intent)
+                            Toast.makeText(this, "Please grant 'All Files Access' permission to continue.", Toast.LENGTH_LONG).show()
                         }
 
-                        val flags = it.flags
-                        val takeFlags = flags and
-                                (Intent.FLAG_GRANT_READ_URI_PERMISSION or
-                                        Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
-                        val persistFlags  = flags and Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
+                        /*
+                        val takeFlags = it.flags and
+                                (Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
 
-                        if (takeFlags != 0 && persistFlags != 0) {
+                        if (takeFlags != 0) {
                             try {
                                 contentResolver.takePersistableUriPermission(uri, takeFlags)
                                 Log.d("MainActivity",
@@ -163,14 +173,15 @@ class MainActivity : ComponentActivity() {
                                 Log.w("MainActivity",
                                     "Failed to take persistable permission for $uri", e)
                             }
-                        } else {
-                            Log.w("MainActivity",
-                                "Intent did not include persistable flags for $uri")
                         }
+                        */
 
                         if (it.type?.startsWith("text/") == true ||
                             it.type == "application/text" ||
-                            it.type == "application/x-unknown") {
+                            it.type == "application/x-unknown" ||
+                            it.type?.startsWith("application/") == true
+                        ) {
+                            showTextEditor.value = true
                             fileHandler.handleFileUri(
                                 contentResolver,
                                 uri,
@@ -178,9 +189,10 @@ class MainActivity : ComponentActivity() {
                                 fileContent,
                                 showTextEditor,
                                 fileUri,
-                                it
+                                it,
+                                mimeTypeString
                             )
-                            showTextEditor.value = true
+                            mimeTypeString.value = contentResolver.getType(uri)
                         }
                     }
                     else -> Log.w("MainActivity", "Unhandled intent action: $action")
@@ -209,10 +221,11 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    @SuppressLint("UnusedMaterial3ScaffoldPaddingParameter")
     @Composable
     fun MainContent() {
         val configuration = LocalConfiguration.current
-        val recentFilesState = remember { mutableStateOf(fileHandler.getRecentFiles()) }
+        //val recentFilesState = remember { mutableStateOf(fileHandler.getRecentFiles()) }
         val isSystemInDarkTheme = configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK == Configuration.UI_MODE_NIGHT_YES
         val isDarkTheme by remember { mutableStateOf(isSystemInDarkTheme) }
 
@@ -221,15 +234,40 @@ class MainActivity : ComponentActivity() {
             MaterialTheme(
                 colorScheme = if (isDarkTheme) darkColorScheme() else lightColorScheme()
             ) {
-                Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
+                Scaffold(modifier = Modifier.fillMaxSize()) { _ ->
+                    if (showMissingFileDialog.value) {
+                        AlertDialog(
+                            onDismissRequest = { showMissingFileDialog.value = false },
+                            title = { Text(errorMessage.value) },
+                            text = { Text("This file is no longer available. If you don't re-pick it, it will be removed from the recent files list.") },
+                            confirmButton = {
+                                Row {
+                                    TextButton(onClick = {
+                                        showMissingFileDialog.value = false
+                                        openDocument.launch(arrayOf("text/*", "application/*"))
+                                    }) {
+                                        Text("Re-pick")
+                                    }
+                                    Spacer(modifier = Modifier.weight(1f))
+                                    TextButton(onClick = {
+                                        showMissingFileDialog.value = false
+                                        missingFileUri.value?.let { fileHandler.removeRecentFile(it.toString()) }
+                                    }) {
+                                        Text("Remove")
+                                    }
+                                }
+                            }
+                        )
+                    }
                     if (showTextEditor.value) {
                         Log.d("MainActivity", "MainContent: File name: $fileName")
                         TextEditor(
                             text = fileContent.value,
                             fileName = fileName.value,
+                            mimeType = mimeTypeString.value,
                             onBackClick = {
                                 showTextEditor.value = false
-                                recentFilesState.value = fileHandler.getRecentFiles()
+                                fileHandler.recentFilesState.value = fileHandler.getRecentFiles()
                             },
                             onRename = { newName ->
                                 fileName.value = newName
@@ -241,11 +279,11 @@ class MainActivity : ComponentActivity() {
                     } else {
                         MainMenu(
                             onNewFileClick = { createDocument.launch("NewFile.txt") },
-                            onOpenFileClick = { openDocument.launch(arrayOf("text/plain")) },
-                            recentFiles = recentFilesState.value,
+                            onOpenFileClick = { openDocument.launch(arrayOf("text/*", "application/*")) },
+                            recentFilesState = fileHandler.recentFilesState.value,
                             clearRecentFiles = {
                                 clearRecentFiles()
-                                recentFilesState.value = emptySet()
+                                fileHandler.recentFilesState.value = emptySet()
                             },
                             onRecentFileClick = { recentFile ->
                                 val uri = recentFile.path.toUri()
@@ -257,12 +295,15 @@ class MainActivity : ComponentActivity() {
                                     fileContent,
                                     showTextEditor,
                                     fileUri,
-                                    Intent().apply {
-                                        flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
-                                    }
+                                    Intent(),
+                                    mimeTypeString,
+                                    onFileMissing = { missingUri, dialogTitle ->
+                                        missingFileUri.value = missingUri
+                                        errorMessage.value = dialogTitle
+                                        showMissingFileDialog.value = true
+                                    },
                                 )
                             }
-
                         )
                     }
                 }
