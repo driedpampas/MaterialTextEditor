@@ -40,6 +40,12 @@ import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import android.util.Log
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.material3.Button
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.MutableState
 import eu.org.materialtexteditor.ui.theme.displayFontFamily
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -49,15 +55,20 @@ fun TextEditor(
     fileName: String,
     mimeType: String?,
     onBackClick: () -> Unit,
-    onRename: ((String) -> Unit)? = null,
+    onRename: (String) -> Unit,
     onSave: (String) -> Unit,
-    onShare: (String) -> Unit
+    onShare: (String) -> Unit,
+    loading: MutableState<Boolean>
 ) {
     var textState by remember { mutableStateOf(text) }
     var showRenameDialog by remember { mutableStateOf(false) }
     var currentFileName by remember { mutableStateOf(fileName) }
     var fontSize by remember { mutableStateOf(16.sp) }
     var showTextSizeDialog by remember { mutableStateOf(false) }
+
+    LaunchedEffect(loading) {
+        loading.value = false
+    }
 
     Column {
         if (showRenameDialog) {
@@ -66,11 +77,13 @@ fun TextEditor(
                 onDismiss = { showRenameDialog = false },
                 onConfirm = { newName ->
                     currentFileName = newName
-                    onRename?.invoke(newName)
+                    onRename.invoke(newName)
                     showRenameDialog = false
                 },
                 mimeType = mimeType,
-           )
+                lineCount = textState.lineSequence().count(),
+                maxLineLength = textState.lineSequence().maxOfOrNull { it.length } ?: 0
+            )
         }
         if (showTextSizeDialog) {
             TextSizeDialog(
@@ -125,7 +138,9 @@ fun RenameDialog(
     currentName: String,
     onDismiss: () -> Unit,
     onConfirm: (String) -> Unit,
-    mimeType: String?
+    mimeType: String?,
+    lineCount: Int? = null,
+    maxLineLength: Int? = null
 ) {
     var newName by remember { mutableStateOf(currentName) }
     Log.d("RenameDialog", "MimeType: $mimeType")
@@ -143,6 +158,13 @@ fun RenameDialog(
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 Text("MIME type: ${mimeType ?: "Unknown"}")
+                Spacer(modifier = Modifier.height(4.dp))
+                lineCount?.let {
+                    Text("Lines: $it")
+                }
+                maxLineLength?.let {
+                    Text("Max line length: $it")
+                }
             }
         },
         confirmButton = {
@@ -207,4 +229,202 @@ fun TextSizeDialog(
             }
         }
     )
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun LargeFileViewer(
+    content: String,
+    fileName: String,
+    mimeType: String?,
+    onBackClick: () -> Unit,
+    onRename: (String) -> Unit,
+    onShare: (String) -> Unit,
+    loading: MutableState<Boolean>
+) {
+    val lines = remember(content) { content.lineSequence().toList() }
+    var showRenameDialog by remember { mutableStateOf(false) }
+    var currentFileName by remember { mutableStateOf(fileName) }
+    var fontSize by remember { mutableStateOf(16.sp) }
+    var showTextSizeDialog by remember { mutableStateOf(false) }
+
+    LaunchedEffect(loading) {
+        loading.value = false
+    }
+
+    Column {
+        if (showRenameDialog) {
+            RenameDialog(
+                currentName = currentFileName,
+                onDismiss = { showRenameDialog = false },
+                onConfirm = { newName ->
+                    currentFileName = newName
+                    onRename.invoke(newName)
+                    showRenameDialog = false
+                },
+                mimeType = mimeType,
+                lineCount = lines.size,
+                maxLineLength = lines.maxOfOrNull { it.length } ?: 0
+            )
+        }
+        if (showTextSizeDialog) {
+            TextSizeDialog(
+                currentSize = fontSize,
+                onSizeChange = { fontSize = it },
+                onDismiss = { showTextSizeDialog = false }
+            )
+        }
+
+        TopAppBar(
+            title = {
+                Text(
+                    text = currentFileName,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.clickable { showRenameDialog = true }
+                )
+            },
+            navigationIcon = {
+                IconButton(onClick = onBackClick) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                }
+            },
+            actions = {
+                IconButton(onClick = { showTextSizeDialog = true }) {
+                    Icon(Icons.Outlined.FormatSize, contentDescription = "Adjust text size")
+                }
+                IconButton(onClick = { onShare(content) }) {
+                    Icon(Icons.Outlined.Share, contentDescription = "Share")
+                }
+            },
+            colors = TopAppBarDefaults.topAppBarColors(
+                containerColor = MaterialTheme.colorScheme.surface,
+                titleContentColor = MaterialTheme.colorScheme.onSurface
+            ),
+        )
+
+        LazyColumn(modifier = Modifier.fillMaxSize()) {
+            items(lines.size) { index ->
+                Text(
+                    lines[index],
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                    fontSize = fontSize,
+                    fontFamily = displayFontFamily
+                )
+            }
+        }
+    }
+}
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun BufferedTextEditor(
+    lines: List<String>,
+    windowSize: Int = 500,
+    fileName: String,
+    mimeType: String?,
+    onBackClick: () -> Unit,
+    onRename: (String) -> Unit,
+    onSave: (List<String>) -> Unit,
+    onShare: (String) -> Unit,
+    loading: MutableState<Boolean>
+) {
+    var windowStart by remember { mutableStateOf(0) }
+    val windowEnd = (windowStart + windowSize).coerceAtMost(lines.size)
+    var visibleLines by remember { mutableStateOf(lines.subList(windowStart, windowEnd)) }
+    var textState by remember { mutableStateOf(visibleLines.joinToString("\n")) }
+    var showRenameDialog by remember { mutableStateOf(false) }
+    var currentFileName by remember { mutableStateOf(fileName) }
+    var fontSize by remember { mutableStateOf(16.sp) }
+    var showTextSizeDialog by remember { mutableStateOf(false) }
+
+    LaunchedEffect(windowStart, lines, loading) {
+        visibleLines = lines.subList(windowStart, windowEnd)
+        textState = visibleLines.joinToString("\n")
+        loading.value = false
+    }
+
+    Column {
+        if (showRenameDialog) {
+            RenameDialog(
+                currentName = currentFileName,
+                onDismiss = { showRenameDialog = false },
+                onConfirm = { newName ->
+                    currentFileName = newName
+                    onRename.invoke(newName)
+                    showRenameDialog = false
+                },
+                mimeType = mimeType,
+                lineCount = lines.size,
+                maxLineLength = lines.maxOfOrNull { it.length } ?: 0
+            )
+        }
+        if (showTextSizeDialog) {
+            TextSizeDialog(
+                currentSize = fontSize,
+                onSizeChange = { fontSize = it },
+                onDismiss = { showTextSizeDialog = false }
+            )
+        }
+
+        TopAppBar(
+            title = {
+                Text(
+                    text = currentFileName,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.clickable { showRenameDialog = true }
+                )
+            },
+            navigationIcon = {
+                IconButton(onClick = onBackClick) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                }
+            },
+            actions = {
+                IconButton(onClick = { showTextSizeDialog = true }) {
+                    Icon(Icons.Outlined.FormatSize, contentDescription = "Adjust text size")
+                }
+                IconButton(onClick = {
+                    val editedLines = textState.split("\n")
+                    val newLines = lines.toMutableList()
+                    for (i in editedLines.indices) {
+                        if (windowStart + i < newLines.size) {
+                            newLines[windowStart + i] = editedLines[i]
+                        }
+                    }
+                    onSave(newLines)
+                }) {
+                    Icon(Icons.Outlined.Save, contentDescription = "Save")
+                }
+                IconButton(onClick = { onShare(textState) }) {
+                    Icon(Icons.Outlined.Share, contentDescription = "Share")
+                }
+            },
+            colors = TopAppBarDefaults.topAppBarColors(
+                containerColor = MaterialTheme.colorScheme.surface,
+                titleContentColor = MaterialTheme.colorScheme.onSurface
+            ),
+        )
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Button(
+                onClick = { windowStart = (windowStart - windowSize).coerceAtLeast(0) },
+                enabled = windowStart > 0
+            ) { Text("Previous") }
+            Text("Lines ${windowStart + 1}–$windowEnd / ${lines.size}")
+            Button(
+                onClick = { windowStart = (windowStart + windowSize).coerceAtMost(lines.size - windowSize) },
+                enabled = windowEnd < lines.size
+            ) { Text("Next") }
+        }
+        TextField(
+            value = textState,
+            onValueChange = { textState = it },
+            textStyle = TextStyle(fontSize = fontSize, fontFamily = displayFontFamily),
+            modifier = Modifier.fillMaxSize()
+        )
+    }
 }

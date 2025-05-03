@@ -12,14 +12,19 @@ val versionProps = Properties().apply {
         load(versionPropsFile.inputStream())
     } else {
         setProperty("VERSION_CODE", "1")
+        setProperty("VERSION_NAME", "1.0")
     }
 }
 
-val gitCommit: String? by project
+val isCI = System.getenv("CI") == "true"
 
-val newVersionCode = versionProps.getProperty("VERSION_CODE").toInt() + 1
+val newVersionCode = versionProps.getProperty("VERSION_CODE").toInt() + if (isCI) 0 else 1
 versionProps.setProperty("VERSION_CODE", newVersionCode.toString())
-versionProps.store(versionPropsFile.outputStream(), null)
+if (!isCI) {
+    versionProps.store(versionPropsFile.outputStream(), null)
+}
+
+val newVersionName = versionProps.getProperty("VERSION_NAME") ?: "dev"
 
 android {
     namespace = "eu.org.materialtexteditor"
@@ -28,9 +33,9 @@ android {
     defaultConfig {
         applicationId = "eu.org.materialtexteditor"
         minSdk = 31
-        targetSdk = 34
+        targetSdk = 35
         versionCode = newVersionCode
-        versionName = gitCommit ?: "dev"
+        versionName = newVersionName
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

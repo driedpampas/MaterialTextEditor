@@ -11,12 +11,10 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Favorite
-import androidx.compose.material.icons.rounded.Info
+import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.HorizontalDivider
@@ -100,7 +98,7 @@ fun MainMenu(
                         shape = RoundedCornerShape(8.dp)
                     )
                     .border(
-                        2.dp,
+                        1.dp,
                         MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
                         shape = RoundedCornerShape(8.dp)
                     )
@@ -108,13 +106,13 @@ fun MainMenu(
             ) {
                 if (recentFilesState.isEmpty()) {
                     Row(
+                        modifier = Modifier
+                            .padding(start = 8.dp, end = 8.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Icon(
-                            imageVector = Icons.Rounded.Info,
+                            imageVector = Icons.Outlined.Info,
                             contentDescription = "No recent files",
-                            tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
-                            modifier = Modifier.size(24.dp)
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
@@ -136,7 +134,6 @@ fun MainMenu(
                                 )
                                 if (index < recentFilesState.size - 1) {
                                     HorizontalDivider(
-                                        modifier = Modifier.padding(vertical = 4.dp)
                                     )
                                 }
                             }
